@@ -127,6 +127,7 @@ def log_post_prob(log_SJoint):
 
 def evaluation(pred,LTE) : 
     
+    
     mask = (pred==LTE)
     
     mask= np.array(mask,dtype=bool)
@@ -134,7 +135,10 @@ def evaluation(pred,LTE) :
     corr = np.count_nonzero(mask)
     tot = LTE.shape[0]
     
+    
     acc = float(corr)/tot
+    
+    
     
     return acc,tot-corr
 
@@ -164,9 +168,9 @@ def MVG_approach(D,L,DTE):
     log_pred = log_post_prob(log_sm_joint)
     
     #simple function to evaluate the accuracy of our model
-    acc,_ = evaluation(pred,LTE)  
-    acc_2,_=evaluation(log_pred,LTE)
-    inacc = 1-acc
+    #acc,_ = evaluation(pred,LTE)  
+    #acc_2,_=evaluation(log_pred,LTE)
+    #inacc = 1-acc
     
     return log_pred
 
@@ -195,7 +199,7 @@ def NB_approach(D,L,DTE):
     log_sm_joint_sol = np.load('logSJoint_MVG.npy')
     
     #let's compute the POSTERIOR PROBABILITY P(C=c| X = xt) = fx,c(xt,c)/sm_joint.sum(0)
-    #be careful! These functions below return prediction labels yet! The Posterio probability 
+    #be careful! These functions below return prediction labels yet! The Posterior probability 
     #computation is made inside the functions!
     pred = posterior_prob(sm_joint) 
     log_pred = log_post_prob(log_sm_joint)
@@ -244,38 +248,74 @@ def TCG_approach(D,L,DTE):
 
     return log_pred
 
-def K_fold(D,L):
+def TCNBG_approach(D,L,DTE):
+    means,S_matrix = TCG_model(D,L) #3 means and 1 S_matrix -> tied matrix because of strong dipendence among the classes
     
-        MVG_err = 0
-        NB_err=0
-        TCG_err=0
+    S_matrix = S_matrix * np.eye(S_matrix.shape[0],S_matrix.shape[1])
+    #to recycle yet exiting code (loglikelihoods function), I generated a S_matrices variable cloning three times the S_matrix 
+    S_matrices = [S_matrix,S_matrix,S_matrix]
+    
+    log_score_matrix = loglikelihoods(DTE,means,S_matrices)
+    
+    #adopting broadcasting we can compute JOINT DISTRIBUTION PROBABILITY fx,c(xt,c) = fx|c(xt|c)*Pc(c)
+    Pc = 1/3 #we assume all class' Pc(c) are the same 
+    #for a misunderstanding thing whit the cov-matrix I called the S matrix sm_joint 
+    sm_joint = np.exp(log_score_matrix)*Pc
+    SJoint_sol = np.load('SJoint_TiedMVG.npy')
+    
+    log_sm_joint = log_score_matrix + np.log(Pc)
+    log_sm_joint_sol = np.load('logSJoint_TiedMVG.npy')
+    
+    log_marginal_sol = np.load('logMarginal_TiedMVG.npy')
+    
+    #let's compute the POSTERIOR PROBABILITY P(C=c| X = xt) = fx,c(xt,c)/sm_joint.sum(0)
+    #be careful! These functions below return prediction labels yet! The Posterio probability 
+    #computation is made inside the functions!
+    pred = posterior_prob(sm_joint) 
+    log_pred = log_post_prob(log_sm_joint)
+    
+    log_SPost_sol=np.load('logPosterior_TiedMVG.npy')
+    SPost_sol=np.load('Posterior_TiedMVG.npy')
+    
+    #simple function to evaluate the accuracy of our model
+    acc,_ = evaluation(pred,LTE)  
+    acc_2,_=evaluation(log_pred,LTE)
+    inacc = 1-acc
+
+    return log_pred
+    
+
+def LOO(D,L):
+    
+        MVG_pred = []
+        NB_pred=np.zeros(D.shape[1])
+        TCG_pred=np.zeros(D.shape[1])
+        TCNBG_pred=np.zeros(D.shape[1])
     
         for i in range(D.shape[1]):
-             #holdout method adopted for training set and evaluation set split
+             #K-fold Leave One Out method adopted to slit up training set into training set and validation 
              DTE = D[:,i:i+1]  #1 sample of the dataset used for testing and the other for testing
              
-             #find out how to delete a single sample!!!!
+             #it deletes a single sample at time
              DTR = np.delete(D,i,axis=1)
              LTR = np.delete(L,i)
              LTE = L[i:i+1]
              
-             pred_LOO_MVG = MVG_approach(DTR,LTR,DTE)
-             _,err = evaluation(pred_LOO_MVG,LTE)
-             MVG_err += err
+             pred_LOO_MVG = MVG_approach(DTR,LTR,DTE)[0]
+             MVG_pred.append(pred_LOO_MVG)
+             
              
              pred_LOO_NB = NB_approach(DTR,LTR,DTE)
-             _,err = evaluation(pred_LOO_NB,LTE)
-             NB_err += err
+             NB_pred[i] = pred_LOO_NB
              
              pred_LOO_TCG = TCG_approach(DTR, LTR, DTE)
-             _,err = evaluation(pred_LOO_TCG,LTE)
-             TCG_err+=err
-          
-        print(MVG_err*100/D.shape[1])
-        print(NB_err*100/D.shape[1])
-        print(TCG_err*100/D.shape[1])
+             TCG_pred[i] = pred_LOO_TCG
+             
+             pred_LOO_TCNBG = TCNBG_approach(DTR,LTR, DTE)
+             TCNBG_pred[i] = pred_LOO_TCNBG
         
-        return 
+        
+        return np.array(MVG_pred),np.array(NB_pred),np.array(TCG_pred),np.array(TCNBG_pred)
     
     
 if __name__ == "__main__":
@@ -295,8 +335,27 @@ if __name__ == "__main__":
     print(evaluation(pred_Naive_Bayes,LTE)[0]*100)
     print(evaluation(pred_Tied_cov_Gauss,LTE)[0]*100)
     
-    #let's try with K-FOLD EVALUATION system (Leave One Out variant)
-    K_fold(D,L)
+    
+    
+    #let's try with Leave One Out EVALUATION system (Leave One Out variant)
+    
+    #NOT SURE THIS IS THE RIGHT SOLUTION EXPECIALLY ABOUT WHAT KIND OF DATASET WE NEED TO USE!!!!!
+    MVG_pred,NB_pred,TCG_pred,TCNBG_pred = LOO(DTR,LTR)
+    
+    MVG_acc,MVG_err = evaluation(MVG_pred, L)
+    
+    NB_acc,NB_err = evaluation(NB_pred,L)
+    
+    TCG_acc,TCG_err = evaluation(TCG_pred, L)
+    
+    TCNBG_acc,TCNBG_err = evaluation(TCNBG_pred, L)
+    
+    print("LLO_MVG_err_ratio: ",(1-MVG_acc)*100)
+    print("LLO_NB_err_ratio: ",(1-NB_acc)*100)
+    print("LLO_TCG_err_ratio: ",(1-TCG_acc)*100)
+    print("LLO_TCNBG_err_ratio: ",(1-TCNBG_acc)*100)
+
+    
     
     
    
