@@ -53,11 +53,15 @@ class logRegClass:
         #T is the matrix with the n vectors zi (shape k)
         T = np.zeros((K,n))
         T[self.LTR, np.arange(n)] = 1
+        
         #first J's addend 
-        first = (self.l / 2) * np.linalg.norm(W) ** 2 
+        first = (self.l / 2) * (W*W).sum()
         
         # Compute the matrix of scores S
-        S = np.dot(W.T,self.DTR) + b
+        S = np.dot(W.T,self.DTR) + b[:, np.newaxis]
+        #np.newaxis adds a new dimension to an arra.
+            #Here for example an additional dimension over the columns is set
+        
         # Compute the log-sum-exp of the rows of S
         lse = np.log(np.sum(np.exp(S), axis=0))
         # Compute matrix Y_log
@@ -69,54 +73,49 @@ class logRegClass:
         return J
         
 def accuracy (S,LTE):
-        count = 0
         n = len(S)
-        for i in range(n):
-            if S[i] == LTE[i]:
-                count += 1
         
-        acc = float(count)/n * 100
+        #zip(S,LTE) allows us to iterate simultaneously over S and LTE
+        acc = sum([s == l for s, l in zip(S, LTE)]) / n * 100
         return acc
+
        
 
 if __name__ == "__main__":
    
     
     #binary classificator with Logistic Regression applied to the Iris dataset
-    l = 0.001
+    l = 0.00001
     D, L = load_iris()
     (DTR, LTR), (DTE, LTE) = split_db_2to1(D, L)
-    #x0 should be equal to DxK + 1
-    x0 = np.zeros(DTR.shape[0] * (np.max(LTR)+1) + 1)
+    nclasses = len(np.unique(LTR))
+    
+    #x0 should be equal to DxK + K because we need D*K elements for W and K elements for b
+    x0 = np.zeros(DTR.shape[0] * nclasses + nclasses)
     
     
     logRegObj = logRegClass(DTR, LTR, l) #I created an object logReg with logreg_obj inside
     
     #optimize.fmin_l_bfgs_b looks for secod order info to search direction pt and then find an acceptable step size at for pt
     #I set approx_grad=True so the function will generate an approximated gradient for each iteration
-   
     params,f_min,_ = sc.optimize.fmin_l_bfgs_b(logRegObj.logreg_obj, x0,approx_grad=True)
     #the function found the coord for the minimal value of logreg_obj and they conrespond to w and b
     
-    b = params[-1]
+    b = params[DTR.shape[0]*nclasses:]
     
-    w = np.array(params[0:-1]).reshape((DTR.shape[0],np.max(LTR)+1))
+    #we can resize W into a amtrix now
+    w = np.array(params[:DTR.shape[0]*nclasses]).reshape((DTR.shape[0],nclasses))
     
-    S = np.zeros((np.max(LTE)+1,DTE.shape[1]))
     
    #I apply the model just trained to classify the test set samples
-    for i in range(DTE.shape[1]):
-        for c in range(np.max(LTE)+1):
-            x = DTE[:,i:i+1]
-            x = np.array(x)
-            x = x.reshape((x.shape[0],1))
-            S[c][i]=(np.dot(w[:,c:c+1].T,x) + b)
+       #look at how the broadcasting is used here
+    S = np.dot(w.T, DTE) + b[:, np.newaxis]
+    #np.newaxis adds a new dimension to an arra.
+        #Here for example an additional dimension over the columns is set
+   
     
     pred = np.argmax(S, axis=0)
         
-    #S = [i where if x > 0 else 0 for x in S] #I transform in 1 all the pos values and in 0 all the negative ones
-    
-    
     
     acc = accuracy(pred,LTE)
     
